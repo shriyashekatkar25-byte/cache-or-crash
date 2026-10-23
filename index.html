@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache or Crash · APM Lab</title>
+<meta name="description" content="How big should the default per-session cache budget be for DataFrame caching on serverless compute? A Monte Carlo + importance sampling decision prototype by Shriya Shekatkar.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;700&family=Inter:wght@400;600;800&family=Cormorant+Garamond:ital,wght@0,600;1,500&family=Fredoka:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#111111; --paper:#ffffff; --grid:#fbfbf8; --gridline:#dcdcd6;
+  --cyan:#1fb3e5; --ele:#b9c3cf; --eleDark:#7f8b99; --toe:#f4a7b4;
+  --sage:#8f9e86; --sageDeep:#76866d; --frame:#4b3415; --gold:#d9a62b; --teal:#1f5563; --rose:#d98c99; --sageInk:#16211a;
+  --muted:#555555;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 16px/1.6 Inter,system-ui,sans-serif;overflow-x:hidden}
+a{color:inherit}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+h2{font:700 clamp(30px,5vw,46px)/1.05 "Archivo Narrow",sans-serif;letter-spacing:-.01em;margin:0 0 18px;text-transform:lowercase}
+h3{margin:0 0 6px;font:800 17px/1.3 Inter,sans-serif}
+section{padding:56px 0}
+.kicker{font:600 12px/1 "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+
+/* ---------- HERO: justified condensed-type poster (pin: programming rule) ---------- */
+.hero{position:relative;padding:40px 0 34px;border-bottom:3px solid var(--ink);overflow:hidden}
+.hero::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.12;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+.poster{font:500 clamp(46px,10.4vw,128px)/.93 "Archivo Narrow",sans-serif;letter-spacing:-.02em;text-align:justify;text-align-last:justify;margin:0;word-spacing:.08em;filter:blur(.25px)}
+.poster span{display:block}
+.poster .cur{display:inline-block;width:.42em;height:.8em;background:var(--ink);vertical-align:-.06em;margin-left:.1em;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.hero-meta{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;margin-top:26px}
+.hero-meta p{margin:4px 0;font-size:15px;max-width:640px}
+.byline{font:600 13px/1.5 "JetBrains Mono",monospace}
+.sticker{width:132px;height:132px;transform:rotate(8deg);filter:drop-shadow(3px 4px 0 rgba(0,0,0,.85));animation:wob 5s ease-in-out infinite}
+@keyframes wob{50%{transform:rotate(-4deg) translateY(-4px)}}
+
+/* ---------- CARDS: graph paper + black flash ornaments (pin: where flowers dance) ---------- */
+.gridpaper{background-color:var(--grid);background-image:linear-gradient(var(--gridline) 1px,transparent 1px),linear-gradient(90deg,var(--gridline) 1px,transparent 1px);background-size:18px 18px}
+.masonry{columns:3 280px;column-gap:18px}
+.card{break-inside:avoid;position:relative;border:2.5px solid var(--ink);border-radius:4px;padding:26px 22px 20px;margin:0 0 18px;background-clip:padding-box}
+.card .orn{position:absolute;width:30px;height:30px}
+.card .orn.tl{top:-14px;left:-14px}.card .orn.br{bottom:-14px;right:-14px;transform:rotate(180deg)}
+.card ul{margin:6px 0 0;padding:0;list-style:none}
+.card li{padding-left:22px;position:relative;margin:6px 0;font-size:15px}
+.card li::before{content:"";position:absolute;left:0;top:5px;width:13px;height:13px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='%23111'%3E%3Ccircle cx='10' cy='4.5' r='4.2'/%3E%3Ccircle cx='10' cy='15.5' r='4.2'/%3E%3Ccircle cx='4.5' cy='10' r='4.2'/%3E%3Ccircle cx='15.5' cy='10' r='4.2'/%3E%3C/g%3E%3Ccircle cx='10' cy='10' r='2.2' fill='%23fff'/%3E%3C/svg%3E") center/contain no-repeat}
+.pincap{font:600 11px/1.3 "JetBrains Mono",monospace;letter-spacing:.06em;text-transform:uppercase;margin-top:12px;color:#333}
+.tag{display:inline-block;border:2px solid var(--ink);border-radius:999px;padding:1px 10px;margin:3px 4px 0 0;font:600 12px/1.6 "JetBrains Mono",monospace;background:#fff}
+.btn{appearance:none;cursor:pointer;border:2.5px solid var(--ink);background:var(--ink);color:#fff;border-radius:999px;padding:9px 16px 9px 34px;font:700 14px/1 Inter,sans-serif;position:relative;transition:transform .15s}
+.btn::before{content:"✿";position:absolute;left:13px;top:50%;transform:translateY(-52%);font-size:15px}
+.btn.alt{background:#fff;color:var(--ink)}
+.btn:hover{transform:translateY(-2px)}
+.btn:focus-visible,input:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+/* ---------- SIM ROOM: sage panel, brown frame, gold halo (pin: Radha Krishna in Chinese attire) ---------- */
+.room{background:var(--frame);padding:14px;border-radius:6px;position:relative}
+.room-in{background-color:var(--sage);border:2px solid var(--gold);border-radius:3px;padding:26px 22px;color:var(--sageInk);position:relative;overflow:hidden;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cg fill='none' stroke='%2376866d' stroke-width='1.3' opacity='.75'%3E%3Ccircle cx='32' cy='32' r='7'/%3E%3Cpath d='M32 18c4 6 4 22 0 28M18 32c6-4 22-4 28 0'/%3E%3Cpath d='M0 0c6 4 6 12 0 16M64 64c-6-4-6-12 0-16'/%3E%3C/g%3E%3C/svg%3E")}
+.room h2{font-family:"Cormorant Garamond",serif;text-transform:none;font-weight:600;font-size:clamp(32px,5vw,48px)}
+.room .label{position:absolute;top:10px;right:16px;font:italic 500 16px "Cormorant Garamond",serif;color:#fff8e6}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px 20px;margin:14px 0 18px}
+.ctl label{display:flex;justify-content:space-between;font:600 13px/1.3 Inter,sans-serif}
+.ctl output{font-family:"JetBrains Mono",monospace;background:#fff8e6;border:1.5px solid var(--frame);border-radius:999px;padding:0 8px;font-size:12px}
+input[type=range]{width:100%;accent-color:var(--teal);height:28px}
+.canvases{display:grid;grid-template-columns:1.25fr 1fr;gap:14px}
+.cv{background:#f3ecd8;border:2px solid var(--frame);border-radius:4px;padding:8px;box-shadow:inset 0 0 0 3px #e7d9b2}
+.cv canvas{width:100%;height:auto;display:block}
+.cv p{margin:6px 2px 0;font-size:12.5px;line-height:1.4;color:#2a2a1f}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12.5px;margin-top:4px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px;border:1px solid #222}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.room .btn{background:var(--teal);border-color:var(--frame)}
+.room .btn.alt{background:#fff8e6;color:var(--frame)}
+table.scan{width:100%;border-collapse:collapse;margin-top:16px;font:400 13px/1.4 "JetBrains Mono",monospace;background:#fff8e6;border:2px solid var(--frame)}
+table.scan th,table.scan td{padding:6px 8px;border-bottom:1px solid #d9c99a;text-align:right}
+table.scan th:first-child,table.scan td:first-child{text-align:left}
+table.scan tr.pick{background:#f6dd9a;font-weight:600}
+.scanwrap{overflow-x:auto}
+
+/* ---------- KPI BADGES: cyan field, chunky grey outlined stickers (pin: elephants) ---------- */
+.kpis{background:var(--cyan);border:3px solid var(--ink);border-radius:22px;padding:22px 16px 30px;margin-top:18px;display:grid;grid-template-columns:repeat(3,1fr);gap:22px 16px}
+@media (max-width:760px){.room{padding:7px}.room-in{padding:22px 12px}.badge{padding:14px 6px 20px}.badge .s{font-size:10px;padding:3px 6px}.kpis{grid-template-columns:repeat(2,1fr);gap:20px 10px;padding:18px 10px 26px}}
+.badge{background:var(--ele);border:3.5px solid var(--ink);border-radius:46% 46% 30% 30%/40% 40% 26% 26%;padding:16px 12px 22px;text-align:center;position:relative;box-shadow:0 5px 0 var(--ink);transition:transform .3s}
+.badge::after{content:"";position:absolute;left:50%;bottom:-9px;transform:translateX(-50%);width:62%;height:14px;
+  background:radial-gradient(circle at 12% 50%,var(--toe) 0 5px,transparent 6px),radial-gradient(circle at 37% 50%,var(--toe) 0 5px,transparent 6px),radial-gradient(circle at 63% 50%,var(--toe) 0 5px,transparent 6px),radial-gradient(circle at 88% 50%,var(--toe) 0 5px,transparent 6px)}
+.badge .v{font:700 clamp(22px,3.4vw,30px)/1.05 Fredoka,sans-serif}
+.badge .k{font:500 12.5px/1.25 Fredoka,sans-serif;margin-top:4px}
+.badge .s{display:inline-block;margin-top:6px;font:600 11px/1 "JetBrains Mono",monospace;padding:4px 8px;border-radius:999px;border:2px solid var(--ink);background:#fff}
+.badge .s.bad{background:var(--toe)}
+.badge.pop{transform:scale(1.04) rotate(-1deg)}
+
+/* ---------- MEMO ---------- */
+.memo{border:2.5px solid var(--ink);border-radius:4px;padding:28px 24px;position:relative}
+.memo dl{display:grid;grid-template-columns:150px 1fr;gap:10px 18px;margin:0}
+.memo dt{font:700 13px/1.5 "JetBrains Mono",monospace;text-transform:uppercase;letter-spacing:.06em}
+.memo dd{margin:0}
+.vp{margin-top:20px;padding:16px 18px;background:var(--ink);color:#fff;border-radius:4px;font:500 18px/1.45 "Archivo Narrow",sans-serif}
+.stamp{position:absolute;top:-16px;right:18px;background:var(--cyan);border:3px solid var(--ink);border-radius:999px;padding:5px 14px;font:700 14px Fredoka,sans-serif;transform:rotate(4deg)}
+
+/* ---------- MATH + CODE ---------- */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.eq{font:600 15px/1.6 "JetBrains Mono",monospace;background:#fff;border:2px dashed var(--ink);padding:10px 12px;margin:10px 0;overflow-x:auto}
+pre{margin:0;background:var(--teal);color:#f7f1df;border:3px solid var(--frame);border-radius:4px;padding:16px;overflow-x:auto;font:400 13px/1.55 "JetBrains Mono",monospace}
+pre .c{color:#e8cf86}
+.codehead{font:600 12px "JetBrains Mono",monospace;margin:14px 0 6px;letter-spacing:.08em;text-transform:uppercase}
+
+footer{border-top:3px solid var(--ink);padding:26px 0 40px;font-size:14px}
+footer .credits{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6}
+footer .credits a{color:var(--muted)}
+
+@media (max-width:760px){
+  .canvases,.two{grid-template-columns:1fr}
+  .hero-meta{grid-template-columns:1fr}
+  .sticker{width:96px;height:96px;justify-self:end;margin-top:-10px}
+  .memo dl{grid-template-columns:1fr;gap:2px 0}
+  .memo dd{margin-bottom:10px}
+  section{padding:42px 0}
+  .wrap{padding:0 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">APM Lab · decision prototype · serverless compute</div>
+    <h1 class="poster" aria-label="PM rule: don't size the default for the average session">
+      <span>pm rule: don't</span>
+      <span>size the default</span>
+      <span>for the average</span>
+      <span>session<span class="cur" aria-hidden="true"></span></span>
+    </h1>
+    <div class="hero-meta">
+      <div>
+        <p><strong>Mirrors:</strong> <a href="https://docs.databricks.com/aws/en/release-notes/product/2026/october">DataFrame caching on serverless compute entered Public Preview (Databricks release notes, Oct 23, 2026)</a>.</p>
+        <p>The decision: how much memory each serverless session's DataFrame cache should get by default, judged on the rare sessions that blow it up rather than the typical one.</p>
+        <p class="byline">Shriya Shekatkar · UCLA · Stats 102C Monte Carlo Methods</p>
+      </div>
+      <svg class="sticker" viewBox="0 0 140 140" aria-hidden="true">
+        <defs><linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#b9c3cf"/><stop offset=".55" stop-color="#7f8b99"/><stop offset="1" stop-color="#e9eef3"/></linearGradient></defs>
+        <circle cx="70" cy="70" r="64" fill="#1fb3e5" stroke="#111" stroke-width="5"/>
+        <rect x="34" y="36" width="72" height="20" rx="6" fill="url(#chrome)" stroke="#111" stroke-width="4"/>
+        <rect x="34" y="60" width="72" height="20" rx="6" fill="url(#chrome)" stroke="#111" stroke-width="4"/>
+        <rect x="34" y="84" width="72" height="20" rx="6" fill="#f4a7b4" stroke="#111" stroke-width="4"/>
+        <circle cx="46" cy="46" r="3.5" fill="#111"/><circle cx="46" cy="70" r="3.5" fill="#111"/><circle cx="46" cy="94" r="3.5" fill="#111"/>
+        <path d="M86 90l12 8M98 90l-12 8" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+        <text x="70" y="128" text-anchor="middle" font-family="Fredoka" font-weight="700" font-size="13" fill="#111">CACHE?</text>
+      </svg>
+    </div>
+  </div>
+</header>
+
+<main>
+<!-- THE DECISION -->
+<section class="gridpaper" id="decision">
+  <div class="wrap">
+    <div class="kicker">01 · the decision board</div>
+    <h2>one default, four pins on the board</h2>
+    <div class="masonry">
+      <article class="card gridpaper">
+        <svg class="orn tl" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <svg class="orn br" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <h3>Customer problem</h3>
+        <p>A data scientist on serverless notebooks builds a cleaned feature DataFrame, then queries it ten times while exploring. Without a cache, every query recomputes the whole lineage, so each "quick look" is another 20–60 seconds of waiting and paying.</p>
+        <div class="pincap">pinned: the iterative-notebook user</div>
+      </article>
+      <article class="card gridpaper">
+        <svg class="orn tl" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <h3>Proposed change</h3>
+        <p>Caching is in Public Preview. Before it's on for everyone, set a <strong>default per-session cache budget</strong> (in GB). When a session asks for more than the budget, least-recently-used entries get evicted. Past 3× the budget, eviction can't keep up and the session restarts. That restart is the crash I'm guarding against.</p>
+        <span class="tag">budget: 2–64 GB</span><span class="tag">evict: LRU</span>
+        <div class="pincap">pinned: the knob we ship</div>
+      </article>
+      <article class="card gridpaper">
+        <svg class="orn br" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <h3>Success metric</h3>
+        <p><strong>Compute minutes saved per caching session</strong>, with a target of ≥ 2.0 min on average, and ≥ 90% of sessions whose whole cache fits in the budget.</p>
+        <h3 style="margin-top:14px">Guardrails</h3>
+        <ul>
+          <li>Crash rate (demand &gt; 3× budget) ≤ <strong>1 per 10,000</strong> sessions</li>
+          <li>Sessions made <em>slower</em> by caching ≤ <strong>2%</strong></li>
+          <li>Reserved-memory cost ≤ <strong>25%</strong> of compute dollars saved</li>
+          <li>p95 interactive latency unchanged within <strong>±5%</strong> (watched in the experiment)</li>
+        </ul>
+        <div class="pincap">pinned: how we'll know</div>
+      </article>
+      <article class="card gridpaper">
+        <svg class="orn tl" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <h3>Stakeholders</h3>
+        <ul>
+          <li>Serverless compute eng (memory manager, eviction)</li>
+          <li>Notebook &amp; ML experience PMs (the users who call <code>.cache()</code>)</li>
+          <li>Finance / COGS owners (reserved memory)</li>
+          <li>Support &amp; docs (Preview limits, how to opt out)</li>
+          <li>Field engineers with heavy-ETL design partners</li>
+        </ul>
+        <div class="pincap">pinned: who signs off</div>
+      </article>
+      <article class="card gridpaper">
+        <svg class="orn br" viewBox="0 0 30 30" aria-hidden="true"><g fill="#111"><circle cx="15" cy="7" r="6"/><circle cx="15" cy="23" r="6"/><circle cx="7" cy="15" r="6"/><circle cx="23" cy="15" r="6"/></g><circle cx="15" cy="15" r="3" fill="#fff"/></svg>
+        <h3>Why this is hard</h3>
+        <p>The average session caches about 3 GB, so any budget looks fine on average. The real risk sits in the right tail: a few sessions cache a huge join and crash. At 1-in-10,000 odds, plain Monte Carlo barely ever sees a crash. <strong>Importance sampling</strong> is the method built for that kind of tail.</p>
+        <div class="pincap">pinned: the tail is the product</div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- SIMULATION -->
+<section id="sim">
+  <div class="wrap">
+    <div class="room">
+      <div class="room-in">
+        <span class="label">simulation room</span>
+        <div class="kicker">02 · live Monte Carlo</div>
+        <h2>Ten thousand notebook sessions, one budget</h2>
+        <p style="max-width:760px;margin:0 0 6px">Each simulated session caches a few DataFrames with heavy-tailed (log-normal) sizes and reuses each one a geometric number of times. The left canvas shows each session's cache demand against the budget. The right canvas shows the running Monte Carlo estimate of minutes saved, with its ±1.96·SE band. The table compares the crash risk from plain sampling with the importance-sampling estimate. All numbers are synthetic.</p>
+        <div class="controls">
+          <div class="ctl"><label for="budget">Default cache budget <output id="budgetO"></output></label><input id="budget" type="range" min="1" max="6" step="1" value="4"></div>
+          <div class="ctl"><label for="sigma">Size spread σ (log-GB) <output id="sigmaO"></output></label><input id="sigma" type="range" min="0.6" max="1.6" step="0.05" value="1.15"></div>
+          <div class="ctl"><label for="lam">DataFrames cached / session <output id="lamO"></output></label><input id="lam" type="range" min="1" max="6" step="0.5" value="3"></div>
+          <div class="ctl"><label for="reuse">Avg reuses per cached DF <output id="reuseO"></output></label><input id="reuse" type="range" min="1" max="10" step="0.5" value="4"></div>
+          <div class="ctl"><label for="delta">IS tilt δ (shift of log-size) <output id="deltaO"></output></label><input id="delta" type="range" min="0" max="2.5" step="0.1" value="1.2"></div>
+          <div class="ctl"><label for="nsim">Sessions simulated <output id="nsimO"></output></label><input id="nsim" type="range" min="2000" max="30000" step="1000" value="10000"></div>
+        </div>
+        <div class="btns">
+          <button class="btn" id="run">Run simulation</button>
+          <button class="btn alt" id="reseed">New seed</button>
+          <span class="tag" id="seedTag" style="background:#fff8e6;border-color:var(--frame)">seed 2026</span>
+        </div>
+        <div class="canvases" style="margin-top:16px">
+          <div class="cv">
+            <canvas id="scatter" width="640" height="360" aria-label="Scatter of simulated sessions: cache demand in GB on a log axis against budget"></canvas>
+            <div class="legend"><span><i style="background:#1f5563"></i>fits in budget</span><span><i style="background:#d9a62b"></i>evicts (slower hits)</span><span><i style="background:#d98c99"></i>crash (&gt;3× budget)</span><span><i style="background:transparent;border:2px solid #4b3415"></i>IS proposal draws</span></div>
+          </div>
+          <div class="cv">
+            <canvas id="conv" width="480" height="360" aria-label="Running estimate of minutes saved per session with a 95 percent band"></canvas>
+            <p>Running mean of minutes saved per session (gold) narrows as n grows. The band width shrinks like 1/√n, as the CLT predicts.</p>
+          </div>
+        </div>
+
+        <div class="kpis" aria-live="polite">
+          <div class="badge" id="b1"><div class="v" id="k1">–</div><div class="k">min saved / session<br>(95% CI)</div><span class="s" id="s1">target ≥ 2.0</span></div>
+          <div class="badge" id="b2"><div class="v" id="k2">–</div><div class="k">sessions fully<br>in budget</div><span class="s" id="s2">target ≥ 90%</span></div>
+          <div class="badge" id="b3"><div class="v" id="k3">–</div><div class="k">crashes per 10k<br>(importance sampling)</div><span class="s" id="s3">guardrail ≤ 1</span></div>
+          <div class="badge" id="b4"><div class="v" id="k4">–</div><div class="k">sessions made<br>slower</div><span class="s" id="s4">guardrail ≤ 2%</span></div>
+          <div class="badge" id="b5"><div class="v" id="k5">–</div><div class="k">memory cost /<br>dollars saved</div><span class="s" id="s5">guardrail ≤ 25%</span></div>
+          <div class="badge" id="b6"><div class="v" id="k6">–</div><div class="k">IS efficiency vs<br>plain MC</div><span class="s" id="s6">mean w ≈ 1</span></div>
+        </div>
+
+        <div class="scanwrap">
+        <table class="scan" id="scan" aria-label="Budget scan">
+          <thead><tr><th>budget</th><th>fits</th><th>min saved</th><th>slower</th><th>crash/10k plain MC</th><th>crash/10k IS ± SE</th><th>mem cost ratio</th><th>verdict</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MEMO -->
+<section class="gridpaper" id="memo">
+  <div class="wrap">
+    <div class="kicker">03 · director memo (rewrites itself from the run)</div>
+    <h2>memo: default cache budget for serverless</h2>
+    <div class="memo gridpaper">
+      <span class="stamp" id="stamp">DRAFT</span>
+      <dl>
+        <dt>Decision</dt><dd id="mDecision">Run the simulation.</dd>
+        <dt>Evidence</dt><dd id="mEvidence">–</dd>
+        <dt>Risks</dt><dd id="mRisks">–</dd>
+        <dt>Rollout plan</dt><dd id="mPlan">–</dd>
+        <dt>Next step</dt><dd id="mNext">–</dd>
+      </dl>
+      <div class="vp"><span style="font:600 12px 'JetBrains Mono',monospace;letter-spacing:.1em;opacity:.8">WHAT I'D TELL THE VP IN ONE SENTENCE</span><br><span id="mVP">–</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- MATH -->
+<section id="math">
+  <div class="wrap">
+    <div class="kicker">04 · the math, from my Monte Carlo course</div>
+    <h2>monte carlo integration + importance sampling</h2>
+    <div class="two">
+      <div class="card gridpaper">
+        <h3>An expectation is an integral, so average it</h3>
+        <p>"Expected minutes saved per session" is an integral of the savings function over every possible session. I can't do it by hand: sizes are log-normal, counts are random, and eviction is a step function. So I draw <em>n</em> sessions and take the sample mean. By the Strong Law of Large Numbers it converges to the true value. The CLT gives an error bar: mean ± 1.96·s/√n. To make the band half as wide, you need four times as many sessions.</p>
+        <div class="eq">θ = E[h(X)] ≈ (1/n) Σ h(xᵢ) &nbsp;&nbsp; SE = s / √n</div>
+        <p>Probabilities fit the same pattern. A crash rate is just the average of an indicator: 1 if the session crashed, 0 otherwise.</p>
+      </div>
+      <div class="card gridpaper">
+        <h3>When the event is rare, sample where it lives</h3>
+        <p>If crashes happen 1 in 50,000 times, 10,000 plain draws usually show zero, which would read as "safe" with no evidence behind it. Instead I draw sizes from a <strong>proposal</strong> g that pushes log-sizes up by δ, so big sessions show up often. Each draw then gets a weight w = f/g so the estimate stays unbiased for the real world f.</p>
+        <div class="eq">P(crash) ≈ (1/n) Σ w(xᵢ)·1[crash(xᵢ)], &nbsp; w = Π f(sⱼ)/g(sⱼ)</div>
+        <p>Two checks keep me honest: the average weight should be close to 1, and efficiency (plain-MC variance ÷ IS variance) shows how many plain draws one weighted draw is worth. Set δ too large and a handful of weights dominate, so efficiency falls again. You can see that with the slider.</p>
+      </div>
+    </div>
+    <div class="card gridpaper" style="margin-top:4px">
+      <h3>Product example in one line</h3>
+      <p>It's the same move as estimating a 1-in-10,000 crash rate for a new default without making 10,000 customers crash: oversample the scary sessions on purpose, then reweight them back to how often they really happen. Smaller pieces of the course also show up here. Reuse counts come from the inverse-CDF method (R = 1 + ⌊ln U / ln(1−p)⌋, a geometric draw), and log-normal sizes come from Box-Muller normals.</p>
+    </div>
+  </div>
+</section>
+
+<!-- REAL DATA -->
+<section class="gridpaper" id="real">
+  <div class="wrap">
+    <div class="kicker">05 · how I'd run it on real data</div>
+    <h2>swap synthetic draws for telemetry</h2>
+    <p style="max-width:780px">Illustrative table names only. The idea: fit the size and reuse distributions from Preview telemetry, then run the same importance-sampling estimate on every candidate budget before choosing the GA default.</p>
+    <div class="codehead">SQL · per-session cache demand from Preview sessions</div>
+<pre><span class="c">-- illustrative schema: one row per cache() call during the Preview</span>
+WITH per_session AS (
+  SELECT session_id,
+         COUNT(*)                         AS dfs_cached,
+         SUM(cached_bytes) / POW(1024, 3) AS demand_gb,
+         AVG(reuse_count)                 AS avg_reuse,
+         SUM(recompute_ms_avoided) / 6e4  AS minutes_saved
+  FROM preview_telemetry.cache_events
+  WHERE event_date &gt;= current_date() - INTERVAL 28 DAYS
+  GROUP BY session_id
+)
+SELECT percentile_approx(demand_gb, array(0.5, 0.9, 0.99, 0.999)) AS demand_q,
+       AVG(LN(demand_gb / dfs_cached))    AS mu_log_size,
+       STDDEV(LN(demand_gb / dfs_cached)) AS sigma_log_size,
+       AVG(avg_reuse)                     AS mean_reuse,
+       AVG(minutes_saved)                 AS avg_minutes_saved
+FROM per_session;</pre>
+    <div class="codehead">Python · importance-sampled crash rate for each candidate budget</div>
+<pre>import numpy as np
+rng = np.random.default_rng(2026)
+
+def crash_rate_is(mu, sigma, lam, budget_gb, delta=1.2, n=200_000):
+    k = 1 + rng.poisson(lam - 1, n)                   <span class="c"># DataFrames per session</span>
+    logs = rng.normal(mu + delta, sigma, k.sum())     <span class="c"># proposal g: shifted log-sizes</span>
+    sid = np.repeat(np.arange(n), k)
+    demand = np.bincount(sid, weights=np.exp(logs))
+    <span class="c"># log w = sum over DFs of [(x-mu-delta)^2 - (x-mu)^2] / (2 sigma^2)</span>
+    logw = np.bincount(sid, weights=((logs-mu-delta)**2 - (logs-mu)**2) / (2*sigma**2))
+    w = np.exp(logw)
+    hit = w * (demand &gt; 3 * budget_gb)
+    return hit.mean(), hit.std() / np.sqrt(n), w.mean()  <span class="c"># estimate, SE, sanity (≈1)</span>
+
+fit = spark.table("pm_sandbox.cache_fit").first()     <span class="c"># mu, sigma, lam from the SQL above</span>
+for b in [4, 8, 16, 32]:
+    p, se, wbar = crash_rate_is(fit.mu, fit.sigma, fit.lam, b)
+    print(f"{b:&gt;3} GB  crash/10k = {1e4*p:.3f} ± {1e4*se:.3f}   mean w = {wbar:.2f}")</pre>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Unofficial concept prototype by Shriya Shekatkar. All data is simulated. Not affiliated with any company.</strong></p>
+    <p>Part of <a href="https://shriyashekatkar25-byte.github.io/apm-lab/">APM Lab, the full gallery of product-decision prototypes</a>. Launch reference: <a href="https://docs.databricks.com/aws/en/release-notes/product/2026/october">Databricks platform release notes, October 2026</a>.</p>
+    <p class="credits">Design inspired by:
+      <a href="https://www.pinterest.com/pin/704391198011909232/">“programming rule” by Ashish Kumar</a> ·
+      <a href="https://www.pinterest.com/pin/1109785533256726799/">“Where flowers dance” by Tinyghetto</a> ·
+      <a href="https://www.pinterest.com/pin/316026098843747403/">elephants pin (untitled, October 2026 board)</a> ·
+      <a href="https://www.pinterest.com/pin/875246508858164242/">“Shree Radha Krishna in Chinese attire” by Star Boy</a>.
+      All visuals redrawn in CSS/SVG; no pin images used.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+"use strict";
+const BUDGETS=[2,4,8,16,32,64];
+const MU=Math.log(0.45);          // median single-DataFrame size 0.45 GB
+const SESSION_H=0.75, MEM_RATE=0.02, COMPUTE_RATE=0.07; // synthetic $/GB-hr reserved, $/compute-minute
+const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let seed=2026;
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+function makeNormal(u){let spare=null;return function(){if(spare!==null){const s=spare;spare=null;return s;}let a=u();if(a<1e-12)a=1e-12;const b=u();const r=Math.sqrt(-2*Math.log(a));spare=r*Math.sin(2*Math.PI*b);return r*Math.cos(2*Math.PI*b);}}
+function poisson(u,l){if(l<=0)return 0;const L=Math.exp(-l);let k=0,p=1;do{k++;p*=u();}while(p>L);return k-1;}
+function geom(u,mean){const p=1/mean;if(p>=1)return 1;return 1+Math.floor(Math.log(1-u())/Math.log(1-p));}
+
+const $=id=>document.getElementById(id);
+const ctl={budget:$('budget'),sigma:$('sigma'),lam:$('lam'),reuse:$('reuse'),delta:$('delta'),nsim:$('nsim')};
+function params(){return{B:BUDGETS[+ctl.budget.value-1],sigma:+ctl.sigma.value,lam:+ctl.lam.value,reuse:+ctl.reuse.value,delta:+ctl.delta.value,n:+ctl.nsim.value};}
+function labels(){const p=params();$('budgetO').textContent=p.B+' GB';$('sigmaO').textContent=p.sigma.toFixed(2);$('lamO').textContent=p.lam.toFixed(1);$('reuseO').textContent=p.reuse.toFixed(1);$('deltaO').textContent=p.delta.toFixed(1);$('nsimO').textContent=p.n.toLocaleString();}
+
+// one session = list of {s (GB), r (reuses)}
+function drawSessions(n,p,shift,u,nrm){
+  const out=[];
+  for(let i=0;i<n;i++){
+    const k=1+poisson(u,p.lam-1);const dfs=[];let logw=0,dem=0;
+    for(let j=0;j<k;j++){const x=MU+shift+p.sigma*nrm();const s=Math.exp(x);dem+=s;
+      if(shift){logw+=((x-MU-shift)**2-(x-MU)**2)/(2*p.sigma*p.sigma);}
+      dfs.push({s,r:geom(u,p.reuse)});}
+    out.push({dfs,dem,w:shift?Math.exp(logw):1,jit:u()});
+  }
+  return out;
+}
+// evaluate one session under budget B → minutes saved, flags
+function evalSession(ss,B){
+  let used=0,saved=0;const crash=ss.dem>3*B;
+  for(const d of ss.dfs){
+    const t=(21*Math.pow(d.s,0.8))/60;           // recompute minutes per reuse
+    const hit=(0.6*Math.sqrt(d.s))/60;           // cached read minutes
+    const over=0.15*t;                           // one-time materialize overhead
+    if(used+d.s<=B){used+=d.s;saved+=d.r*(t-hit)-over;}
+    else{saved-=over;}                           // evicted: paid to materialize, got nothing
+  }
+  if(crash){saved=-ss.dfs.reduce((a,d)=>a+(21*Math.pow(d.s,0.8))/60,0)-3;} // restart: redo all + 3 min
+  return{saved,fits:ss.dem<=B,crash,slower:saved<0,mem:Math.min(ss.dem,B)};
+}
+function summarize(sessions,B){
+  let n=sessions.length,sum=0,sq=0,fit=0,slow=0,crash=0,mem=0;
+  for(const ss of sessions){const e=evalSession(ss,B);sum+=e.saved;sq+=e.saved*e.saved;fit+=e.fits;slow+=e.slower;crash+=e.crash;mem+=e.mem;}
+  const mean=sum/n,sd=Math.sqrt(Math.max(sq/n-mean*mean,0));
+  const memCost=(0.5*mem/n+0.05*B)*SESSION_H*MEM_RATE,dollarsSaved=Math.max(mean,1e-9)*COMPUTE_RATE;
+  return{mean,se:sd/Math.sqrt(n),fit:fit/n,slow:slow/n,crashMC:crash/n,memRatio:memCost/dollarsSaved};
+}
+function isEstimate(prop,B){
+  const n=prop.length;let s=0,s2=0,ws=0,ws2=0;
+  for(const ss of prop){const v=ss.dem>3*B?ss.w:0;s+=v;s2+=v*v;ws+=ss.w;ws2+=ss.w*ss.w;}
+  const p=s/n,varIS=Math.max(s2/n-p*p,1e-30);
+  const eff=p>0?(p*(1-p))/varIS:0;
+  return{p,se:Math.sqrt(varIS/n),wbar:ws/n,ess:ws*ws/ws2,eff};
+}
+
+const sc=$('scatter'),cc=$('conv');
+const sx=sc.getContext('2d'),cx=cc.getContext('2d');
+let anim=null,state=null;
+
+function xOf(dem,W){const lo=Math.log10(0.05),hi=Math.log10(400);return 40+(Math.log10(Math.max(dem,0.05))-lo)/(hi-lo)*(W-60);}
+function drawScatterFrame(upto){
+  const W=sc.width,H=sc.height,{sessions,prop,p}=state;
+  sx.fillStyle='#f3ecd8';sx.fillRect(0,0,W,H);
+  // axis
+  sx.strokeStyle='#4b3415';sx.lineWidth=1.5;sx.beginPath();sx.moveTo(40,H-34);sx.lineTo(W-14,H-34);sx.stroke();
+  sx.fillStyle='#2a2a1f';sx.font='12px JetBrains Mono, monospace';sx.textAlign='center';
+  [0.1,1,10,100].forEach(v=>{const x=xOf(v,W);sx.beginPath();sx.moveTo(x,H-34);sx.lineTo(x,H-28);sx.stroke();sx.fillText(v+' GB',x,H-14);});
+  sx.textAlign='left';sx.fillText('cache demand per session (log scale)',44,16);
+  // budget halo + crash line
+  const bx=xOf(p.B,W),cxx=xOf(3*p.B,W);
+  const g=sx.createRadialGradient(bx,H/2,4,bx,H/2,120);g.addColorStop(0,'rgba(217,166,43,.45)');g.addColorStop(1,'rgba(217,166,43,0)');
+  sx.fillStyle=g;sx.fillRect(bx-120,30,240,H-70);
+  sx.strokeStyle='#d9a62b';sx.lineWidth=3;sx.beginPath();sx.moveTo(bx,30);sx.lineTo(bx,H-34);sx.stroke();
+  sx.setLineDash([6,5]);sx.strokeStyle='#a8455a';sx.lineWidth=2;sx.beginPath();sx.moveTo(cxx,30);sx.lineTo(cxx,H-34);sx.stroke();sx.setLineDash([]);
+  sx.fillStyle='#4b3415';sx.font='600 12px Inter, sans-serif';sx.fillText('budget '+p.B+' GB',Math.min(bx+5,W-110),46);
+  sx.fillStyle='#8a3346';sx.fillText('crash 3×',Math.min(cxx+5,W-70),62);
+  // proposal draws (rings)
+  const pm=Math.min(prop.length,Math.floor(upto*0.35));
+  sx.strokeStyle='rgba(75,52,21,.55)';sx.lineWidth=1;
+  for(let i=0;i<pm;i++){const s=prop[i];const x=xOf(s.dem,W),y=72+s.jit*(H-112);const r=Math.max(1.5,Math.min(7,2+Math.log10(1+s.w*50)));sx.beginPath();sx.arc(x,y,r,0,7);sx.stroke();}
+  // real sessions
+  const m=Math.min(sessions.length,upto);
+  for(let i=0;i<m;i++){const s=sessions[i];const x=xOf(s.dem,W),y=72+s.jit*(H-112);
+    sx.fillStyle=s.dem>3*p.B?'#d98c99':(s.dem>p.B?'#d9a62b':'#1f5563');
+    const r=s.dem>3*p.B?4.5:2.2;sx.beginPath();sx.arc(x,y,r,0,7);sx.fill();
+    if(s.dem>3*p.B){sx.strokeStyle='#111';sx.lineWidth=1;sx.stroke();}}
+}
+function drawConv(upto){
+  const W=cc.width,H=cc.height,{run}=state;const m=Math.min(run.length,upto);
+  cx.fillStyle='#f3ecd8';cx.fillRect(0,0,W,H);
+  if(m<5)return;
+  let lo=Infinity,hi=-Infinity;for(let i=Math.floor(run.length*0.03);i<run.length;i++){lo=Math.min(lo,run[i].m-run[i].h);hi=Math.max(hi,run[i].m+run[i].h);}
+  const pad=(hi-lo)*0.15+0.05;lo-=pad;hi+=pad;
+  const X=i=>44+i/(run.length-1)*(W-58),Y=v=>H-34-(v-lo)/(hi-lo)*(H-64);
+  cx.strokeStyle='#4b3415';cx.lineWidth=1.5;cx.beginPath();cx.moveTo(44,H-34);cx.lineTo(W-10,H-34);cx.moveTo(44,24);cx.lineTo(44,H-34);cx.stroke();
+  cx.fillStyle='#2a2a1f';cx.font='12px JetBrains Mono, monospace';
+  for(let k=0;k<=3;k++){const v=lo+(hi-lo)*k/3;cx.fillText(v.toFixed(1),4,Y(v)+4);}
+  cx.fillText('n →',W-46,H-14);cx.fillText('min saved',48,18);
+  const start=Math.floor(run.length*0.01);
+  cx.beginPath();for(let i=start;i<m;i++){cx.lineTo(X(i),Y(run[i].m+run[i].h));}for(let i=m-1;i>=start;i--){cx.lineTo(X(i),Y(run[i].m-run[i].h));}cx.closePath();
+  cx.fillStyle='rgba(31,85,99,.28)';cx.fill();
+  cx.beginPath();for(let i=start;i<m;i++){const y=Y(run[i].m);i===start?cx.moveTo(X(i),y):cx.lineTo(X(i),y);}cx.strokeStyle='#b8860b';cx.lineWidth=2.5;cx.stroke();
+  const t=Y(2.0);if(t>24&&t<H-34){cx.setLineDash([5,5]);cx.strokeStyle='#8a3346';cx.lineWidth=1.5;cx.beginPath();cx.moveTo(44,t);cx.lineTo(W-10,t);cx.stroke();cx.setLineDash([]);cx.fillStyle='#8a3346';cx.fillText('target 2.0',W-96,t-5);}
+}
+
+function fmtRate(p){const v=p*1e4;if(v===0)return '0';return v<0.01?v.toExponential(1):v<10?v.toFixed(2):v.toFixed(0);}
+function verdict(r,c){return r.mean>=2&&r.fit>=0.9&&c.p*1e4<=1&&r.slow<=0.02&&r.memRatio<=0.25;}
+
+function run(){
+  if(anim)cancelAnimationFrame(anim);
+  const p=params();
+  const u=mulberry32(seed),nrm=makeNormal(u);
+  const sessions=drawSessions(p.n,p,0,u,nrm);
+  const u2=mulberry32(seed^0x9e3779b9),nrm2=makeNormal(u2);
+  const prop=drawSessions(p.n,p,p.delta,u2,nrm2);
+  // running estimate at chosen budget
+  const run=[];let s=0,s2=0;
+  sessions.forEach((ss,i)=>{const v=evalSession(ss,p.B).saved;s+=v;s2+=v*v;const n=i+1,m=s/n,sd=Math.sqrt(Math.max(s2/n-m*m,0));run.push({m,h:1.96*sd/Math.sqrt(n)});});
+  state={sessions,prop,p,run};
+  // scan
+  const rows=BUDGETS.map(B=>({B,r:summarize(sessions,B),c:isEstimate(prop,B)}));
+  const pick=rows.find(x=>verdict(x.r,x.c));
+  const tb=$('scan').querySelector('tbody');tb.innerHTML='';
+  rows.forEach(x=>{const tr=document.createElement('tr');if(pick&&x.B===pick.B)tr.className='pick';
+    const ok=verdict(x.r,x.c);
+    tr.innerHTML=`<td>${x.B} GB</td><td>${(100*x.r.fit).toFixed(1)}%</td><td>${x.r.mean.toFixed(2)}</td><td>${(100*x.r.slow).toFixed(1)}%</td><td>${fmtRate(x.r.crashMC)}</td><td>${fmtRate(x.c.p)} ± ${fmtRate(x.c.se)}</td><td>${(100*x.r.memRatio).toFixed(0)}%</td><td>${ok?'passes':'fails'}${pick&&x.B===pick.B?' ★ pick':''}</td>`;tb.appendChild(tr);});
+  const cur=rows.find(x=>x.B===p.B);
+  kpis(cur,p);memo(cur,pick,rows,p);
+  // animate
+  if(reduce){drawScatterFrame(p.n);drawConv(p.n);return;}
+  let k=0;const step=Math.max(60,Math.floor(p.n/70));
+  (function frame(){k+=step;drawScatterFrame(k);drawConv(k);if(k<p.n)anim=requestAnimationFrame(frame);})();
+}
+function setBadge(i,val,ok,txt){$('k'+i).textContent=val;const s=$('s'+i);s.className='s'+(ok?'':' bad');if(txt)s.textContent=txt;const b=$('b'+i);b.classList.remove('pop');void b.offsetWidth;if(!reduce)b.classList.add('pop');setTimeout(()=>b.classList.remove('pop'),350);}
+function kpis(x,p){
+  const r=x.r,c=x.c;
+  setBadge(1,r.mean.toFixed(2)+' ±'+(1.96*r.se).toFixed(2),r.mean>=2,(r.mean>=2?'✓ ':'✗ ')+'target ≥ 2.0');
+  setBadge(2,(100*r.fit).toFixed(1)+'%',r.fit>=0.9,(r.fit>=0.9?'✓ ':'✗ ')+'target ≥ 90%');
+  setBadge(3,fmtRate(c.p),c.p*1e4<=1,(c.p*1e4<=1?'✓ ':'✗ ')+'guardrail ≤ 1');
+  setBadge(4,(100*r.slow).toFixed(1)+'%',r.slow<=0.02,(r.slow<=0.02?'✓ ':'✗ ')+'guardrail ≤ 2%');
+  setBadge(5,(100*r.memRatio).toFixed(0)+'%',r.memRatio<=0.25,(r.memRatio<=0.25?'✓ ':'✗ ')+'guardrail ≤ 25%');
+  setBadge(6,c.eff>0?(c.eff>=100?Math.round(c.eff).toLocaleString():c.eff.toFixed(1))+'×':'n/a',c.eff>=1&&Math.abs(c.wbar-1)<0.15,'mean w = '+c.wbar.toFixed(2));
+}
+function memo(cur,pick,rows,p){
+  const r=cur.r,c=cur.c;const ok=verdict(r,c);
+  const stamp=$('stamp');
+  if(pick){
+    stamp.textContent=pick.B===p.B?'SHIP '+p.B+' GB':'PICK '+pick.B+' GB';
+    $('mDecision').innerHTML=`Set the default per-session cache budget to <strong>${pick.B} GB</strong>, the smallest budget that passes every guardrail in this run.${pick.B!==p.B?` The ${p.B} GB setting you're viewing ${ok?'also passes but reserves more memory than needed':'fails at least one guardrail'}.`:''}`;
+  }else{
+    stamp.textContent='HOLD';
+    $('mDecision').innerHTML=`<strong>Hold the default.</strong> No budget from 2 to 64 GB passes every guardrail under these assumptions. Keep caching opt-in during the Preview and fix the binding constraint first.`;
+  }
+  const P=pick||cur;
+  $('mEvidence').innerHTML=`Across ${p.n.toLocaleString()} simulated sessions at ${P.B} GB: ${P.r.mean.toFixed(2)} ± ${(1.96*P.r.se).toFixed(2)} compute minutes saved per session, ${(100*P.r.fit).toFixed(1)}% of sessions fully in budget, and ${(100*P.r.slow).toFixed(1)}% made slower. Importance sampling puts crashes at <strong>${fmtRate(P.c.p)} per 10k</strong> (± ${fmtRate(P.c.se)}). Plain Monte Carlo saw ${fmtRate(P.r.crashMC)} per 10k, about ${Math.round(P.r.crashMC*p.n)} crash${Math.round(P.r.crashMC*p.n)===1?'':'es'} in the whole sample, too few to trust. The weights check out (mean w = ${P.c.wbar.toFixed(2)}).`;
+  const fails=[];
+  if(r.mean<2)fails.push('savings below target');if(r.fit<0.9)fails.push('too many sessions overflow');if(c.p*1e4>1)fails.push('crash tail too fat');if(r.slow>0.02)fails.push('too many sessions slowed by eviction');if(r.memRatio>0.25)fails.push('reserved memory too expensive');
+  $('mRisks').innerHTML=`The tail depends on σ. Every +0.1 in log-size spread visibly fattens the crash rate, so the Preview data has to pin down σ before GA.${fails.length?` At the ${p.B} GB setting you're viewing: ${fails.join(', ')}.`:''} Eviction makes some sessions slower without crashing them. Those users won't file tickets, they'll just turn caching off, so the opt-out rate is a leading indicator.`;
+  $('mPlan').innerHTML=`Stage 1: ship ${P.B} GB to 5% of Preview workspaces for 2 weeks and compare against opt-in (p95 latency ±5%, crash ≤ 1/10k). Stage 2: 50%, with a kill switch that drops back to opt-in. Stage 3: default for all serverless notebooks, with a docs note on how to unpersist.`;
+  $('mNext').innerHTML=`Pull 28 days of Preview cache telemetry, fit μ, σ and reuse, then rerun this budget scan on the fitted values with 200k importance-sampled sessions. Bring the table to the serverless eng sync.`;
+  $('mVP').textContent=pick?`A ${P.B} GB default saves about ${P.r.mean.toFixed(1)} compute minutes per caching session, and the 1-in-10,000 crash risk, which plain sampling can't even see, stays under the guardrail. I recommend a staged rollout behind a kill switch.`:`No default is safe yet: the heavy tail of session sizes either crashes sessions or wastes memory, so we keep caching opt-in until Preview data narrows the tail.`;
+}
+
+Object.values(ctl).forEach(el=>el.addEventListener('input',()=>{labels();clearTimeout(window.__t);window.__t=setTimeout(run,180);}));
+$('run').addEventListener('click',run);
+$('reseed').addEventListener('click',()=>{seed=(Math.random()*1e9)|0;$('seedTag').textContent='seed '+seed;run();});
+labels();run();
+})();
+</script>
+</body>
+</html>
